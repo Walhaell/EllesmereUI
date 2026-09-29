@@ -278,9 +278,7 @@ local function TileRaidFrames(parent, y, W, tile)
         size("Heal Absorb Text Size", "healAbsorbTextSize", 6, 26, 9),
         size("Status Text Size", "statusTextSize", 6, 30, 14));  y = y - h
     _, h = W:DualRow(parent, y,
-        size("Group Number Size", "groupNumberSize", 6, 30, 10),
-        size("Top Name Bar Text Size", "topNameBarTextSize", 6, 30, 11));  y = y - h
-    _, h = W:DualRow(parent, y,
+        size("Top Name Bar Text Size", "topNameBarTextSize", 6, 30, 11),
         { type = "slider", text = "Healer Mana Text Size", min = 8, max = 24, step = 1,
           getValue = function()
               local p = db()
