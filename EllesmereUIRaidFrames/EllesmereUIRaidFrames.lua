@@ -615,12 +615,6 @@ local defaults = {
         statusTextSize     = 12,
         statusTextColor    = { r = 1, g = 1, b = 1 },
         statusShowAFK      = false,
-        -- Group numbers (raid only). Size/color shared with the preview; the toggle gates only real frames (preview always shows them).
-        showGroupNumbers   = false,
-        groupNumberSize    = 10,
-        groupNumberColor   = { r = 1, g = 1, b = 1, a = 0.75 },
-        groupNumberOffsetX = 0,
-        groupNumberOffsetY = 0,
         hoverBorderEnabled = true,
         hoverBorderSize  = 1,
         hoverBorderColor = { r = 1, g = 1, b = 1 },
@@ -10303,25 +10297,6 @@ local function CreateHeaders()
     containerFrame:SetFrameStrata(ns._ResolveFrameStrata(false))
     containerFrame:Show()
 
-    -- Group-number labels (1-8) for the real raid frames. Own (non-secure)
-    -- FontStrings parented to the container; they track each group's first unit
-    -- via relative anchoring (no SetPoint is ever issued on the secure headers).
-    -- Shown only when showGroupNumbers is on (see ns._UpdateGroupNumbers).
-    if not ns._groupNumberLabels then
-        -- Overlay host at a high frame level: labels parented straight to the
-        -- container render BENEATH the bars (buttons are its descendants); a
-        -- high level within the same (LOW) strata lifts them on top.
-        ns._groupNumberOverlay = CreateFrame("Frame", nil, containerFrame)
-        ns._groupNumberOverlay:SetAllPoints(containerFrame)
-        ns._groupNumberOverlay:SetFrameLevel(9000)
-        ns._groupNumberLabels = {}
-        for gi = 1, 8 do
-            local lbl = ns._groupNumberOverlay:CreateFontString(nil, "OVERLAY")
-            lbl:Hide()
-            ns._groupNumberLabels[gi] = lbl
-        end
-    end
-
     -- Build ONLY the active mode's header set; the inactive one materializes
     -- on the first Merge Groups flip (see ns._BuildHeaderSet above).
     ns._BuildHeaderSet((s.mergeGroups and true) or false)
@@ -10338,63 +10313,6 @@ end
 --  8 groups from 31 on.
 -------------------------------------------------------------------------------
 local MOVER_GROUPS = 4
-
--- Real-frame group numbers (1-8): mirror the preview labels onto the actual
--- frames when showGroupNumbers is on, anchoring each group's label to its
--- first populated unit (shared groupNumberSize/Color). Raid + separated-groups
--- only (merged has no per-group first unit). Combat-safe: called only from
--- LayoutGroups (early-returns in combat), SetPoints only our own FontStrings.
-function ns._UpdateGroupNumbers()
-    local labels = ns._groupNumberLabels
-    if not labels then return end
-    if InCombatLockdown() then return end
-    local s = db.profile
-    if (not s.showGroupNumbers) or s.mergeGroups or (not IsInRaid()) then
-        for g = 1, 8 do if labels[g] then labels[g]:Hide() end end
-        return
-    end
-    -- Effective unit growth (mirror the LayoutGroups tier override)
-    local unitGrowth = s.unitGrowth or "DOWN"
-    local activeOv = ns._activeTierOverride
-    if activeOv and activeOv.unitGrowth then unitGrowth = activeOv.unitGrowth end
-    local vg = ns._VisibleGroups() or { true, true, true, true, true, true, false, false }
-    local size = s.groupNumberSize or 10
-    local gc = s.groupNumberColor or {}
-    local ox = s.groupNumberOffsetX or 0
-    local oy = s.groupNumberOffsetY or 0
-    for group = 1, 8 do
-        local lbl = labels[group]
-        local hdr = separatedHdrs[group]
-        local firstBtn
-        if lbl and hdr and vg[group] ~= false then
-            -- First populated unit of this group (empty-but-visible groups -> none)
-            for i = 1, 5 do
-                local btn = hdr[i]
-                if btn and btn:IsShown() and btn:GetAttribute("unit") then firstBtn = btn; break end
-            end
-        end
-        if lbl then
-            if firstBtn then
-                lbl:ClearAllPoints()
-                if unitGrowth == "DOWN" then
-                    lbl:SetPoint("BOTTOM", firstBtn, "TOP", ox, 4 + oy)
-                elseif unitGrowth == "UP" then
-                    lbl:SetPoint("TOP", firstBtn, "BOTTOM", ox, -4 + oy)
-                elseif unitGrowth == "RIGHT" then
-                    lbl:SetPoint("RIGHT", firstBtn, "LEFT", -3 + ox, oy)
-                else -- LEFT
-                    lbl:SetPoint("LEFT", firstBtn, "RIGHT", 3 + ox, oy)
-                end
-                ApplyFont(lbl, size)  -- must precede SetText (FontString needs a font first)
-                lbl:SetText(tostring(group))
-                lbl:SetTextColor(gc.r or 1, gc.g or 1, gc.b or 1, gc.a or 0.75)
-                lbl:Show()
-            else
-                lbl:Hide()
-            end
-        end
-    end
-end
 
 -- Groups the container box spans, for a size tier. The base tiers (10-30) keep
 -- the standard 20-player 4-group box; the 40 tier -- which starts at 31 members
@@ -10663,9 +10581,6 @@ ns._LayoutGroupsImpl = function()
             end
         end
     end
-
-    -- Update real-frame group numbers now that all headers are positioned.
-    ns._UpdateGroupNumbers()
 end
 
 -- Coalescing re-entrancy guard: a re-entrant LayoutGroups() call is NOT dropped
@@ -16477,7 +16392,6 @@ end
 -- Header-managed buttons can't be shown without real units, so we create
 -- our own lightweight frames that look identical for the options preview.
 previewFrames = {}
-local previewGroupLabels = {}  -- [1..4] FontStrings showing group numbers
 local previewContainer = nil   -- standalone anchor frame for preview (doesn't move with containerFrame)
 local previewHiddenParent = nil -- hidden frame to reparent containerFrame into during preview
 
@@ -18930,7 +18844,7 @@ local function RefreshPreview()
     local anchor = previewContainer or containerFrame
     local anchorPad = 0
     local topExtra = 0   -- extra top space (overlay only): 25px gap above the
-                         -- group numbers, leaving room for the centered title
+                         -- frames, leaving room for the centered title
     if isOverlay then
         local oc = GetOrCreateOverlayContainer()
         anchor = oc
@@ -19007,54 +18921,12 @@ local function RefreshPreview()
                 f._power:SetValue(previewPowerValues[frameIdx])
                 f._powerPct = previewPowerValues[frameIdx]
             end
-            if u == 0 then firstFrame = f end
         end
-
-        -- Group number label anchored to the first unit of each group
-        local lbl = previewGroupLabels[g + 1]
-        if not lbl then
-            lbl = anchor:CreateFontString(nil, "OVERLAY")
-            previewGroupLabels[g + 1] = lbl
-        end
-        ApplyFont(lbl, s.groupNumberSize or 10)
-        do
-            -- Shared size/color with the real frames (group-number settings).
-            -- Not gated by showGroupNumbers: the preview always shows numbers.
-            local gc = s.groupNumberColor or {}
-            lbl:SetTextColor(gc.r or 1, gc.g or 1, gc.b or 1, gc.a or 0.75)
-        end
-        lbl:SetText(tostring(g + 1))
-        lbl:ClearAllPoints()
-        -- Anchor based on unit growth: label goes "before" the first unit.
-        -- The X/Y offset (shared group-number setting) shifts it from there.
-        local gnox = s.groupNumberOffsetX or 0
-        local gnoy = s.groupNumberOffsetY or 0
-        if unitGrowth == "DOWN" then
-            lbl:SetPoint("BOTTOM", firstFrame, "TOP", gnox, 4 + gnoy)
-        elseif unitGrowth == "UP" then
-            lbl:SetPoint("TOP", firstFrame, "BOTTOM", gnox, -4 + gnoy)
-        elseif unitGrowth == "RIGHT" then
-            lbl:SetPoint("RIGHT", firstFrame, "LEFT", -3 + gnox, gnoy)
-        else -- LEFT
-            lbl:SetPoint("LEFT", firstFrame, "RIGHT", 3 + gnox, gnoy)
-        end
-        lbl:Show()
     end
 
     -- Reparent after all frames are created (first load creates them in the loop above)
     local reparentTo = isOverlay and overlayContainer or (previewContainer or containerFrame)
     for _, f in ipairs(previewFrames) do f:SetParent(reparentTo) end
-    -- Group-number labels go on a high-level overlay child of the same container
-    -- so they draw ABOVE the preview bars (which are descendants of reparentTo);
-    -- parenting them straight to reparentTo leaves them beneath the bars.
-    if not ns._previewGroupNumberOverlay then
-        ns._previewGroupNumberOverlay = CreateFrame("Frame", nil, reparentTo)
-    end
-    ns._previewGroupNumberOverlay:SetParent(reparentTo)
-    ns._previewGroupNumberOverlay:SetAllPoints(reparentTo)
-    ns._previewGroupNumberOverlay:SetFrameLevel(9000)
-    ns._previewGroupNumberOverlay:Show()
-    for _, lbl in ipairs(previewGroupLabels) do lbl:SetParent(ns._previewGroupNumberOverlay) end
     if petSpec then
         ns.PF_ShowPreview(petSpec, s, reparentTo, anchor,
             petX + anchorPad + padL, petY - anchorPad - topExtra - padT)
@@ -19289,10 +19161,6 @@ local function HidePreview(skipRestore)
     for _, f in ipairs(previewFrames) do
         f:SetParent(containerFrame)
         f:Hide()
-    end
-    for _, lbl in ipairs(previewGroupLabels) do
-        lbl:SetParent(containerFrame)
-        lbl:Hide()
     end
     ns.PF_HidePreview()
     if skipRestore then return end
